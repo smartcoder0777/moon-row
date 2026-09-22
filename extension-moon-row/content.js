@@ -1,6 +1,10 @@
 (() => {
   function boot() {
     if (window.__bcMoonRowLoaded) return;
+    if (window !== window.top) {
+      const path = String(location.pathname || "") + String(location.hash || "");
+      if (!/crash/i.test(path) && !document.querySelector("#crash-banner")) return;
+    }
 
     let botConfig = defaultMoonRowConfig();
     const engine = new MoonRowEngine(botConfig);
@@ -27,7 +31,7 @@
     placePump: null,
   };
 
-  let extVersion = "1.0.0";
+  let extVersion = "1.0.2";
   try {
     extVersion = chrome.runtime.getManifest().version;
   } catch (_) {}
@@ -63,18 +67,30 @@
   }
 
   const BET_LOG_STORAGE = "bc_moon_row_bet_log_v1";
+  const ACTIVITY_LOG_STORAGE = "bc_moon_row_activity_v1";
 
   function persistBetLogs() {
     try {
-      chrome.storage.local.set({ [BET_LOG_STORAGE]: bot.betLog });
+      chrome.storage.local.set({
+        [BET_LOG_STORAGE]: bot.betLog,
+        [ACTIVITY_LOG_STORAGE]: bot.logs.slice(-80),
+      });
+    } catch (_) {}
+  }
+
+  function persistActivityLogs() {
+    try {
+      chrome.storage.local.set({ [ACTIVITY_LOG_STORAGE]: bot.logs.slice(-80) });
     } catch (_) {}
   }
 
   function loadBetLogs(done) {
     try {
-      chrome.storage.local.get(BET_LOG_STORAGE, (data) => {
+      chrome.storage.local.get([BET_LOG_STORAGE, ACTIVITY_LOG_STORAGE], (data) => {
         const raw = data && data[BET_LOG_STORAGE];
         if (Array.isArray(raw)) bot.betLog = raw.slice(-150);
+        const act = data && data[ACTIVITY_LOG_STORAGE];
+        if (Array.isArray(act) && act.length) bot.logs = act.slice(-80);
         if (done) done();
       });
     } catch (_) {
@@ -110,6 +126,7 @@
     if (bot.logs.length > 80) bot.logs.shift();
     bot.siteMessage = msg;
     console.log("[Moon Row]", msg);
+    persistActivityLogs();
     renderOverlay();
   }
 
@@ -129,6 +146,57 @@
   function visible(el) {
     const r = el.getBoundingClientRect();
     return r.width > 16 && r.height > 10 && r.bottom > 0 && r.top < window.innerHeight;
+  }
+
+  function interactive(el) {
+    if (!el || el.disabled || el.getAttribute("aria-disabled") === "true") return false;
+    if (!el.isConnected) return false;
+    if (inHeader(el)) return false;
+    if (!document.hidden && document.visibilityState === "visible") return visible(el);
+    try {
+      const s = window.getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden" || s.pointerEvents === "none") return false;
+    } catch (_) {}
+    return true;
+  }
+
+  function isTrenballInput(el) {
+    if (!el || el.disabled || inHeader(el) || !interactive(el)) return false;
+    const mode = (el.getAttribute("inputmode") || "").toLowerCase();
+    const typ = (el.type || "text").toLowerCase();
+    return mode === "decimal" || typ === "text" || typ === "number" || typ === "tel";
+  }
+
+  function isBetRedLabel(text) {
+    const s = String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!s || s.length > 32) return false;
+    if (/\bcancel\b/.test(s) || /\bplaced\b/.test(s)) return false;
+    return /\bbet\s*red\b/.test(s);
+  }
+
+  function isBetGreenLabel(text) {
+    const s = String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
+    return /\bbet\s*green\b/.test(s) && s.length < 32;
+  }
+
+  function findBetRedButton() {
+    return (
+      allBetControls()
+        .filter((b) => interactive(b))
+        .filter((b) => {
+          const tag = (b.tagName || "").toLowerCase();
+          return tag === "button" || b.getAttribute("role") === "button";
+        })
+        .find((b) => isBetRedLabel(normText(b))) || null
+    );
+  }
+
+  function findBetGreenButton() {
+    return (
+      allBetControls()
+        .filter((b) => interactive(b))
+        .find((b) => isBetGreenLabel(normText(b))) || null
+    );
   }
 
   function isSideBetLabel(text) {
@@ -299,6 +367,7 @@
   }
 
   function detectPhase(cd, live) {
+    if (findBetRedButton()) return "betting";
     if (findMainBetButton()) return "betting";
     if (cd != null) return "betting";
     if (live != null && live > 1.12) return "flying";
@@ -306,7 +375,7 @@
   }
 
   function readLiveMult() {
-    const cashout = Number(engine.config.cashout) || 1.45;
+    const cashout = 2;
     let best = null;
     const els = document.querySelectorAll("div, span, b, p, h1, h2");
     for (const el of els) {
@@ -532,7 +601,7 @@
   }
 
   function betButtonReady() {
-    return !!findMainBetButton();
+    return !!findBetRedButton();
   }
 
   function round2(n) {
@@ -608,20 +677,55 @@
     return amount ? [amount] : [];
   }
 
-  function placeBet(stake, cashout) {
+  function trenballAmountInput(redBtn) {
+    const br = redBtn.getBoundingClientRect();
+    const green = findBetGreenButton();
+    const gr = green ? green.getBoundingClientRect() : null;
+    const left = br.left - 24;
+    const right = gr ? gr.right + 24 : br.right + 220;
+    const cands = [...document.querySelectorAll("input")].filter(isTrenballInput).filter((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.top < br.bottom - 12) return false;
+      if (r.top > br.bottom + 140) return false;
+      if (r.right < left || r.left > right) return false;
+      return true;
+    });
+    if (!cands.length) {
+      const near = inputNearLabel(/amount/i);
+      if (near && isTrenballInput(near)) {
+        const r = near.getBoundingClientRect();
+        if (r.top >= br.bottom - 12) return near;
+      }
+      return null;
+    }
+    cands.sort((a, b) => {
+      const da = Math.abs(a.getBoundingClientRect().top - br.bottom);
+      const db = Math.abs(b.getBoundingClientRect().top - br.bottom);
+      return da - db;
+    });
+    return cands[0];
+  }
+
+  function placeBetRed(stake) {
     dismissCookies();
     clickManualTab();
-    const btn = findMainBetButton();
-    if (!btn) return { ok: false, why: "no-bet-button" };
-    const amount = mainAmountInput(btn);
-    if (!amount) return { ok: false, why: "no-enabled-input" };
-    const cash = mainCashoutInput(btn, amount);
-    const filled = fillStake(amount, stake);
-    if (cash && cash !== amount) setInput(cash, String(cashout));
+    const redBtn = findBetRedButton();
+    if (!redBtn) return { ok: false, why: "no-bet-red-button" };
+    const amount = trenballAmountInput(redBtn);
+    if (!amount) return { ok: false, why: "no-trenball-amount-input" };
     const confirmed = fillStake(amount, stake);
     if (!confirmed.ok) return confirmed;
-    clickEl(btn);
-    return { ok: true, label: normText(btn), amount: confirmed.amount, snapped: !!confirmed.snapped };
+    clickEl(redBtn);
+    return {
+      ok: true,
+      label: normText(redBtn) || "Bet Red",
+      amount: confirmed.amount,
+      snapped: !!confirmed.snapped,
+    };
+  }
+
+  function placeBet(stake) {
+    return placeBetRed(stake);
   }
 
   function armBet(id) {
@@ -687,7 +791,8 @@
     bot.placing = true;
     bot.pending = {
       stake: nxt.stake,
-      cashout: nxt.cashout,
+      side: "red",
+      payout: nxt.payout || 1.96,
       placedAt: Date.now(),
       maxId: lockId,
       maxGameId: lockId,
@@ -697,11 +802,11 @@
       sawRound: false,
     };
     const pendingRef = bot.pending;
-    const placed = placeBet(nxt.stake, nxt.cashout);
+    const placed = placeBet(nxt.stake);
     bot.placing = false;
     if (!placed.ok) {
       if (bot.pending === pendingRef) bot.pending = null;
-      const soft = placed.why === "no-bet-button" || placed.why === "no-enabled-input";
+      const soft = placed.why === "no-bet-red-button" || placed.why === "no-trenball-amount-input";
       if (!soft) bot.lastPlaceFail = Date.now();
       if (!bot.lastPlaceFailLog || Date.now() - bot.lastPlaceFailLog > 2000) {
         bot.lastPlaceFailLog = Date.now();
@@ -724,8 +829,8 @@
     }
     syncPendingFlag();
     bot.didPlaceInWindow = true;
-    log(`Bet ${actual} @ ${nxt.cashout}x placed (${placed.label || "main bet"} amt=${placed.amount ?? actual})`);
-    pushBetLog({ kind: "bet", stake: actual, cashout: nxt.cashout });
+    log(`Trenball RED ${actual} placed (${placed.label || "Bet Red"})`);
+    pushBetLog({ kind: "bet", stake: actual, side: "red", payout: 1.96 });
   }
 
   function pendingMinId(p) {
@@ -736,7 +841,6 @@
     const p = bot.pending;
     if (!p) return;
     const age = (Date.now() - p.placedAt) / 1000;
-    const cash2 = round2(p.cashout);
 
     if (p.gameId == null || p.gameCrash == null) {
       if (age >= 180) {
@@ -749,16 +853,16 @@
     const crash = p.gameCrash;
     const crashId = p.gameId;
     const crash2 = round2(crash);
-    const won = !(crash2 + 1e-9 < cash2);
+    const won = crash2 + 1e-9 < 2;
 
-    const source = `${crashId || "?"} ${crash2}x ${won ? ">=" : "<"} ${cash2}x`;
+    const source = `${crashId || "?"} ${crash2}x ${won ? "<" : "≥"} 2× (RED)`;
     engine.onBetResult(won, p.stake, crash, crashId);
     log(`${won ? "Win" : "Lose"} RED (${source}) | ${engine.state.message}`);
     const last = engine.state.history[engine.state.history.length - 1];
     pushBetLog({
       kind: won ? "win" : "lose",
       stake: p.stake,
-      profit: last ? last.profit : won ? round8(p.stake * (p.cashout - 1)) : round8(-p.stake),
+      profit: last ? last.profit : won ? round8(p.stake * 0.96) : round8(-p.stake),
       crash: crash2,
       crashId: crashId || null,
     });
@@ -898,12 +1002,22 @@
     `;
   }
 
+    function isGameFrame() {
+      try {
+        if (document.getElementById("bc-moon-row-overlay")) return true;
+        if (document.querySelector("#crash-banner")) return true;
+        if (typeof findBetRedButton === "function" && findBetRedButton()) return true;
+      } catch (_) {}
+      return window === window.top;
+    }
+
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!extAlive()) {
         die();
         return;
       }
       if (!msg || !msg.type) return;
+      if (window !== window.top && !isGameFrame()) return;
       if (msg.type === "GET_STATUS") {
         sendResponse(status());
         return;
@@ -956,8 +1070,8 @@
       if (msg.type === "RESET") {
         bot.pending = null;
         bot.betLog = [];
-        persistBetLogs();
         bot.logs = [];
+        persistBetLogs();
         bot.lastGameId = 0;
         bot.awaitingBet = false;
         bot.armedAtId = 0;

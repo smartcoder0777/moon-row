@@ -8,9 +8,11 @@
   --off: #f31260;
 }
 * { box-sizing: border-box; }
-body {
+html, body {
   margin: 0;
   width: 380px;
+  max-height: 580px;
+  overflow-y: auto;
   padding: 12px;
   font-family: "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
@@ -88,7 +90,7 @@ form button { width: 100%; margin-top: 8px; }
   color: var(--text);
   border-color: #3d4d60;
 }
-.tab-panel.hidden { display: none; }
+.tab-panel.hidden { display: none !important; }
 .log-totals {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -117,12 +119,22 @@ form button { width: 100%; margin-top: 8px; }
   padding: 0 6px 4px;
 }
 .log-list {
-  max-height: 280px;
+  max-height: 220px;
+  min-height: 80px;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
 }
+.activity-list { max-height: 140px; min-height: 60px; margin-top: 4px; }
+.activity-line {
+  font-size: 10px;
+  color: #b8c4d1;
+  padding: 4px 6px;
+  border-top: 1px solid var(--line);
+  word-break: break-word;
+}
+.activity-line:first-child { border-top: 0; }
 .log-empty {
   color: var(--muted);
   font-size: 11px;
@@ -138,10 +150,12 @@ form button { width: 100%; margin-top: 8px; }
 .log-row .kind { font-weight: 700; }
 .log-row.bet .kind { color: #7eb6ff; }
 .log-row.win .kind { color: var(--on); }
+.log-row.lose .kind { color: var(--off); }
 .form-title {
   font-size: 11px;
   font-weight: 700;
   color: var(--muted);
   margin: 8px 0 6px;
 }
-.log-hint { margin: 8px 0 0; font-size: 10px; }
+.static-hint { margin: 8px 0 0; font-size: 10px; color: var(--muted); }
+.static-hint b { color: #e7a060; }

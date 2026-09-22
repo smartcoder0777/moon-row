@@ -8,15 +8,15 @@
     STOPPED: "stopped",
   };
 
+  const MOON_MIN = 10;
+  const CAT_MIN = 100;
+  const RED_WIN_BELOW = 2;
+
   function defaultMoonRowConfig() {
     return {
       stake: 100,
-      cashout: 1.96,
       martingale: 2,
       max_attempts: 3,
-      moon_min: 10,
-      cat_min: 100,
-      red_below: 2,
       pos2_max_first: 4,
       filter_rows: 10,
       stop_loss: 500,
@@ -57,27 +57,27 @@
     return Math.round(Number(n) * 100) / 100;
   }
 
-  function rowSide(crash, redBelow) {
-    return crash + 1e-9 < redBelow ? "red" : "green";
+  function rowSide(crash) {
+    return crash + 1e-9 < RED_WIN_BELOW ? "red" : "green";
   }
 
-  function isMoon(crash, cfg) {
+  function isMoon(crash) {
     const v = round2(crash);
-    return v + 1e-9 >= cfg.moon_min && v + 1e-9 < cfg.cat_min;
+    return v + 1e-9 >= MOON_MIN && v + 1e-9 < CAT_MIN;
   }
 
-  function isCat(crash, cfg) {
-    return round2(crash) + 1e-9 >= cfg.cat_min;
+  function isCat(crash) {
+    return round2(crash) + 1e-9 >= CAT_MIN;
   }
 
-  function rowHasCat(row, cfg) {
-    return row.rounds.some((r) => isCat(r.value, cfg));
+  function rowHasCat(row) {
+    return row.rounds.some((r) => isCat(r.value));
   }
 
-  function rowHasTwinMoons(row, cfg) {
+  function rowHasTwinMoons(row) {
     const rs = row.rounds;
     for (let i = 1; i < rs.length; i++) {
-      if (isMoon(rs[i - 1].value, cfg) && isMoon(rs[i].value, cfg)) return true;
+      if (isMoon(rs[i - 1].value) && isMoon(rs[i].value)) return true;
     }
     return false;
   }
@@ -86,13 +86,13 @@
     const n = Number(cfg.filter_rows) || 10;
     const check = completedRows.slice(-n);
     for (const row of check) {
-      if (rowHasCat(row, cfg) || rowHasTwinMoons(row, cfg)) return false;
+      if (rowHasCat(row) || rowHasTwinMoons(row)) return false;
     }
     return true;
   }
 
   function isValidMoonTrigger(row, pos, crash, cfg) {
-    if (!isMoon(crash, cfg)) return false;
+    if (!isMoon(crash)) return false;
     if (pos === 1) return true;
     if (pos === 2) {
       const first = row.rounds[0];
@@ -175,7 +175,12 @@
     }
 
     updateConfig(data) {
-      this.config = { ...this.config, ...data };
+      const d = { ...(data || {}) };
+      delete d.moon_min;
+      delete d.cat_min;
+      delete d.cashout;
+      delete d.red_below;
+      this.config = { ...this.config, ...d };
       this._syncMessage();
     }
 
@@ -197,7 +202,7 @@
     _addRound(id, crash) {
       const cfg = this.config;
       const st = this.state;
-      const side = rowSide(crash, cfg.red_below);
+      const side = rowSide(crash);
       const row = { id: Number(id), value: round2(crash), pos: 0 };
 
       if (!st.current_row) {
@@ -326,10 +331,10 @@
       const seq = this.state.sequence;
       const mg = Number(cfg.martingale) || 2;
       const stake = round8(cfg.stake * Math.pow(mg, Math.max(0, seq.attempt - 1)));
-      return { stake, cashout: cfg.cashout };
+      return { stake, side: "red", payout: 1.96 };
     }
 
-    /** Red win = crash below cashout (default 1.96×). */
+    /** Trenball RED win = crash below 2×. */
     onBetResult(won, stake, crashAt, gameId) {
       const cfg = this.config;
       const st = this.state;
@@ -340,7 +345,7 @@
       st.last_crash = crash;
       st.awaiting_bet = false;
 
-      if (isMoon(crash, cfg)) {
+      if (isMoon(crash)) {
         const profit = round8(-stake);
         st.session_pnl += profit;
         st.total_lost += stake;
@@ -353,7 +358,7 @@
       }
 
       if (won) {
-        const profit = stake * (cfg.cashout - 1);
+        const profit = stake * 0.96;
         st.session_pnl += profit;
         st.total_won += profit;
         st.wins += 1;

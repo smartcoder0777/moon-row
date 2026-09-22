@@ -84,12 +84,9 @@ chrome.runtime.onInstalled.addListener(() => {
     if (!data.config) {
       chrome.storage.local.set({
         config: {
-          stake: 100,
-          cashout: 1.96,
+          stake: 0.01,
           martingale: 2,
           max_attempts: 3,
-          moon_min: 10,
-          cat_min: 100,
           pos2_max_first: 4,
           filter_rows: 10,
           stop_loss: 500,

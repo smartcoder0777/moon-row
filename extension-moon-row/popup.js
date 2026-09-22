@@ -3,11 +3,8 @@ document.getElementById("extVer").textContent =
 
 const KEYS = [
   "stake",
-  "cashout",
   "martingale",
   "max_attempts",
-  "moon_min",
-  "cat_min",
   "pos2_max_first",
   "filter_rows",
   "stop_loss",
@@ -42,32 +39,31 @@ async function ping(tabId) {
   }
 }
 
+const BET_LOG_STORAGE = "bc_moon_row_bet_log_v1";
+const ACTIVITY_LOG_STORAGE = "bc_moon_row_activity_v1";
+
 async function injectBot(tabId) {
-  const files = ["inject.js", "strategy-moon-row.js", "content.js"];
+  const run = async (allFrames) => {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames },
+      files: ["inject.js"],
+      world: "MAIN",
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames },
+      files: ["strategy-moon-row.js", "content.js"],
+    });
+    try {
+      await chrome.scripting.insertCSS({
+        target: { tabId, allFrames },
+        files: ["overlay.css"],
+      });
+    } catch (_) {}
+  };
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      files: ["inject.js"],
-      world: "MAIN",
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      files: ["strategy-moon-row.js", "content.js"],
-    });
-    await chrome.scripting.insertCSS({
-      target: { tabId, allFrames: true },
-      files: ["overlay.css"],
-    });
+    await run(false);
   } catch (_) {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["inject.js"],
-      world: "MAIN",
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["strategy-moon-row.js", "content.js"],
-    });
+    await run(true);
   }
 }
 
@@ -139,6 +135,24 @@ function fmtAmt(n) {
   return (v >= 0 ? "+" : "") + v.toFixed(4);
 }
 
+function renderActivity(lines) {
+  const box = document.getElementById("activityList");
+  if (!box) return;
+  const rows = Array.isArray(lines) ? lines : [];
+  if (!rows.length) {
+    box.innerHTML = `<div class="log-empty">No activity yet.</div>`;
+    return;
+  }
+  box.innerHTML = rows
+    .slice()
+    .reverse()
+    .map((line) => `<div class="activity-line">${String(line || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")}</div>`)
+    .join("");
+}
+
 function renderLog(rows, snap) {
   document.getElementById("logWon").textContent = Number(snap.total_won || 0).toFixed(4);
   document.getElementById("logLost").textContent = Number(snap.total_lost || 0).toFixed(4);
@@ -159,7 +173,7 @@ function renderLog(rows, snap) {
       const kind = r.kind || "bet";
       const label = kind === "win" ? "WIN" : kind === "lose" ? "LOSE" : "BET";
       const amount =
-        kind === "bet" ? `@ ${r.cashout ?? "—"}x` : fmtAmt(r.profit);
+        kind === "bet" ? `RED ${r.payout ? r.payout + "×" : ""}` : fmtAmt(r.profit);
       let round = "—";
       if (r.crash != null && r.crashId != null) round = `${r.crash}x #${r.crashId}`;
       else if (r.gameId != null) round = `#${r.gameId}`;
@@ -200,6 +214,7 @@ function render(s, { syncForm = false } = {}) {
   document.getElementById("msg").textContent = s.site_message || "—";
 
   renderLog(Array.isArray(s.bet_log) ? s.bet_log : [], s);
+  renderActivity(Array.isArray(s.logs) ? s.logs : []);
 
   if ((syncForm || !formReady) && s.config) {
     fillForm(s.config);
@@ -239,8 +254,37 @@ document.getElementById("cfg").onsubmit = async (e) => {
   render(await send("UPDATE_CONFIG", { config: readForm() }), { syncForm: true });
 };
 
+async function loadStoredLogs() {
+  try {
+    const data = await chrome.storage.local.get([BET_LOG_STORAGE, ACTIVITY_LOG_STORAGE]);
+    return {
+      bets: Array.isArray(data[BET_LOG_STORAGE]) ? data[BET_LOG_STORAGE] : [],
+      activity: Array.isArray(data[ACTIVITY_LOG_STORAGE]) ? data[ACTIVITY_LOG_STORAGE] : [],
+    };
+  } catch (_) {
+    return { bets: [], activity: [] };
+  }
+}
+
+function pickRows(live, stored) {
+  const a = Array.isArray(live) ? live : [];
+  const b = Array.isArray(stored) ? stored : [];
+  return a.length >= b.length ? a : b;
+}
+
 async function refresh() {
-  render(await send("GET_STATUS"));
+  const stored = await loadStoredLogs();
+  const s = await send("GET_STATUS");
+  if (s) {
+    s.bet_log = pickRows(s.bet_log, stored.bets);
+    s.logs = pickRows(s.logs, stored.activity);
+    render(s);
+    return;
+  }
+  if (stored.bets.length || stored.activity.length) {
+    renderLog(stored.bets, {});
+    renderActivity(stored.activity);
+  }
 }
 
 refresh().then(() => {
