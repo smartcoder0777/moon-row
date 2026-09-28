@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BC Moon Row Bot",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Moon Row bet-red crash strategy — trend board moons, martingale red bets.",
   "permissions": ["storage", "activeTab", "scripting", "alarms", "tabs"],
   "host_permissions": [

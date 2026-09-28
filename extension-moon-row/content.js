@@ -31,7 +31,7 @@
     placePump: null,
   };
 
-  let extVersion = "1.0.2";
+  let extVersion = "1.0.3";
   try {
     extVersion = chrome.runtime.getManifest().version;
   } catch (_) {}
@@ -677,33 +677,66 @@
     return amount ? [amount] : [];
   }
 
+  function isStakeField(el) {
+    if (!el || el.disabled || inHeader(el) || !el.isConnected) return false;
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag !== "input" && tag !== "textarea") return false;
+    const typ = (el.type || "text").toLowerCase();
+    if (typ === "hidden" || typ === "checkbox" || typ === "radio" || typ === "button") return false;
+    try {
+      const s = window.getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden") return false;
+    } catch (_) {}
+    return true;
+  }
+
+  /** Amount box under Trenball Bet Red / Bet Green — not the main crash Amount above. */
   function trenballAmountInput(redBtn) {
+    try {
+      redBtn.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch (_) {}
     const br = redBtn.getBoundingClientRect();
     const green = findBetGreenButton();
-    const gr = green ? green.getBoundingClientRect() : null;
-    const left = br.left - 24;
-    const right = gr ? gr.right + 24 : br.right + 220;
-    const cands = [...document.querySelectorAll("input")].filter(isTrenballInput).filter((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.top < br.bottom - 12) return false;
-      if (r.top > br.bottom + 140) return false;
-      if (r.right < left || r.left > right) return false;
-      return true;
-    });
-    if (!cands.length) {
-      const near = inputNearLabel(/amount/i);
-      if (near && isTrenballInput(near)) {
-        const r = near.getBoundingClientRect();
-        if (r.top >= br.bottom - 12) return near;
+
+    const byLabel = [];
+    for (const el of document.querySelectorAll("label, div, span, p")) {
+      const t = normText(el);
+      if (!t || t.length > 36 || !/^amount\b/i.test(t)) continue;
+      const lr = el.getBoundingClientRect();
+      if (lr.width < 8 || lr.top < br.bottom - 24) continue;
+      let root = el.parentElement;
+      for (let i = 0; i < 5 && root; i++) {
+        const inp = root.querySelector && root.querySelector("input, textarea");
+        if (inp && isStakeField(inp) && inp.getBoundingClientRect().top >= br.top) {
+          byLabel.push(inp);
+          break;
+        }
+        root = root.parentElement;
       }
-      return null;
     }
-    cands.sort((a, b) => {
-      const da = Math.abs(a.getBoundingClientRect().top - br.bottom);
-      const db = Math.abs(b.getBoundingClientRect().top - br.bottom);
-      return da - db;
-    });
-    return cands[0];
+    if (byLabel.length) {
+      byLabel.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      return byLabel[0];
+    }
+
+    let scope = redBtn.parentElement;
+    for (let depth = 0; depth < 8 && scope; depth++) {
+      if (green && !scope.contains(green)) {
+        scope = scope.parentElement;
+        continue;
+      }
+      const below = [...scope.querySelectorAll("input, textarea")].filter((el) => {
+        if (!isStakeField(el)) return false;
+        const r = el.getBoundingClientRect();
+        return r.top >= br.bottom - 16 && r.top < br.bottom + 240;
+      });
+      if (below.length) {
+        below.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+        return below[0];
+      }
+      scope = scope.parentElement;
+    }
+    return null;
   }
 
   function placeBetRed(stake) {
