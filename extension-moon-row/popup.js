@@ -40,7 +40,6 @@ async function ping(tabId) {
 }
 
 const BET_LOG_STORAGE = "bc_moon_row_bet_log_v1";
-const ACTIVITY_LOG_STORAGE = "bc_moon_row_activity_v1";
 
 async function injectBot(tabId) {
   const run = async (allFrames) => {
@@ -135,24 +134,6 @@ function fmtAmt(n) {
   return (v >= 0 ? "+" : "") + v.toFixed(4);
 }
 
-function renderActivity(lines) {
-  const box = document.getElementById("activityList");
-  if (!box) return;
-  const rows = Array.isArray(lines) ? lines : [];
-  if (!rows.length) {
-    box.innerHTML = `<div class="log-empty">No activity yet.</div>`;
-    return;
-  }
-  box.innerHTML = rows
-    .slice()
-    .reverse()
-    .map((line) => `<div class="activity-line">${String(line || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")}</div>`)
-    .join("");
-}
-
 function renderLog(rows, snap) {
   document.getElementById("logWon").textContent = Number(snap.total_won || 0).toFixed(4);
   document.getElementById("logLost").textContent = Number(snap.total_lost || 0).toFixed(4);
@@ -214,7 +195,6 @@ function render(s, { syncForm = false } = {}) {
   document.getElementById("msg").textContent = s.site_message || "—";
 
   renderLog(Array.isArray(s.bet_log) ? s.bet_log : [], s);
-  renderActivity(Array.isArray(s.logs) ? s.logs : []);
 
   if ((syncForm || !formReady) && s.config) {
     fillForm(s.config);
@@ -256,38 +236,25 @@ document.getElementById("cfg").onsubmit = async (e) => {
 
 async function loadStoredLogs() {
   try {
-    const data = await chrome.storage.local.get([BET_LOG_STORAGE, ACTIVITY_LOG_STORAGE]);
-    return {
-      bets: Array.isArray(data[BET_LOG_STORAGE]) ? data[BET_LOG_STORAGE] : [],
-      activity: Array.isArray(data[ACTIVITY_LOG_STORAGE]) ? data[ACTIVITY_LOG_STORAGE] : [],
-    };
+    const data = await chrome.storage.local.get(BET_LOG_STORAGE);
+    return Array.isArray(data[BET_LOG_STORAGE]) ? data[BET_LOG_STORAGE] : [];
   } catch (_) {
-    return { bets: [], activity: [] };
+    return [];
   }
-}
-
-function pickRows(live, stored) {
-  const a = Array.isArray(live) ? live : [];
-  const b = Array.isArray(stored) ? stored : [];
-  return a.length >= b.length ? a : b;
 }
 
 async function refresh() {
-  const stored = await loadStoredLogs();
   const s = await send("GET_STATUS");
   if (s) {
-    s.bet_log = pickRows(s.bet_log, stored.bets);
-    s.logs = pickRows(s.logs, stored.activity);
     render(s);
     return;
   }
-  if (stored.bets.length || stored.activity.length) {
-    renderLog(stored.bets, {});
-    renderActivity(stored.activity);
-  }
+  const stored = await loadStoredLogs();
+  if (stored.length) renderLog(stored, {});
 }
 
 refresh().then(() => {
+  chrome.storage.local.remove("bc_moon_row_activity_v1");
   chrome.storage.local.get("config", (data) => {
     if (data.config) fillForm(data.config);
   });

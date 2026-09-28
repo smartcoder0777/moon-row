@@ -31,7 +31,7 @@
     placePump: null,
   };
 
-  let extVersion = "1.0.3";
+  let extVersion = "1.0.4";
   try {
     extVersion = chrome.runtime.getManifest().version;
   } catch (_) {}
@@ -68,29 +68,20 @@
 
   const BET_LOG_STORAGE = "bc_moon_row_bet_log_v1";
   const ACTIVITY_LOG_STORAGE = "bc_moon_row_activity_v1";
+  const BET_LOG_CAP = 80;
 
   function persistBetLogs() {
     try {
-      chrome.storage.local.set({
-        [BET_LOG_STORAGE]: bot.betLog,
-        [ACTIVITY_LOG_STORAGE]: bot.logs.slice(-80),
-      });
-    } catch (_) {}
-  }
-
-  function persistActivityLogs() {
-    try {
-      chrome.storage.local.set({ [ACTIVITY_LOG_STORAGE]: bot.logs.slice(-80) });
+      chrome.storage.local.set({ [BET_LOG_STORAGE]: bot.betLog });
     } catch (_) {}
   }
 
   function loadBetLogs(done) {
     try {
-      chrome.storage.local.get([BET_LOG_STORAGE, ACTIVITY_LOG_STORAGE], (data) => {
+      chrome.storage.local.get(BET_LOG_STORAGE, (data) => {
         const raw = data && data[BET_LOG_STORAGE];
-        if (Array.isArray(raw)) bot.betLog = raw.slice(-150);
-        const act = data && data[ACTIVITY_LOG_STORAGE];
-        if (Array.isArray(act) && act.length) bot.logs = act.slice(-80);
+        if (Array.isArray(raw)) bot.betLog = raw.slice(-BET_LOG_CAP);
+        chrome.storage.local.remove(ACTIVITY_LOG_STORAGE);
         if (done) done();
       });
     } catch (_) {
@@ -121,12 +112,7 @@
   }
 
   function log(msg) {
-    const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
-    bot.logs.push(line);
-    if (bot.logs.length > 80) bot.logs.shift();
     bot.siteMessage = msg;
-    console.log("[Moon Row]", msg);
-    persistActivityLogs();
     renderOverlay();
   }
 
@@ -135,7 +121,7 @@
       t: new Date().toLocaleTimeString(),
       ...entry,
     });
-    if (bot.betLog.length > 150) bot.betLog.shift();
+    if (bot.betLog.length > BET_LOG_CAP) bot.betLog.shift();
     persistBetLogs();
   }
 
@@ -843,7 +829,9 @@
       if (!soft) bot.lastPlaceFail = Date.now();
       if (!bot.lastPlaceFailLog || Date.now() - bot.lastPlaceFailLog > 2000) {
         bot.lastPlaceFailLog = Date.now();
-        log(`place_bet fail: ${placed.why}`);
+        const why = placed.why || "unknown";
+        log(`place_bet fail: ${why}`);
+        console.log("[Moon Row] place_bet fail:", why);
       }
       return;
     }
@@ -995,7 +983,7 @@
         die();
         return;
       }
-      console.error("[BC Bot] tick", err);
+      /* tick errors stay off the console unless a bet fails */
     } finally {
       bot.tickBusy = false;
     }
@@ -1007,8 +995,7 @@
     snap.pending_stake = bot.pending ? bot.pending.stake : null;
     snap.site_message = bot.siteMessage;
     snap.live_multiplier = engine.state.last_multiplier_seen;
-    snap.logs = bot.logs.slice(-80);
-    snap.bet_log = bot.betLog.slice(-100);
+    snap.bet_log = bot.betLog.slice(-BET_LOG_CAP);
     snap.config = { ...engine.config };
     return snap;
   }
