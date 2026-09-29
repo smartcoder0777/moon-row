@@ -453,13 +453,25 @@
         settle();
         return;
       }
-      log(`Banner gap ${expected} → ${id} ${value}x — settle #${expected}`);
       const games = collectBannerGames();
       const expRow = games.find((g) => g.id === expected);
-      p.gameId = expected;
-      p.gameCrash = expRow ? expRow.v : 1;
-      p.sawRound = true;
-      settle();
+      if (expRow) {
+        log(`Banner gap ${expected} → ${id} ${value}x — settle #${expected}`);
+        engine.ingestRound(expected, expRow.v);
+        p.gameId = expected;
+        p.gameCrash = expRow.v;
+        p.sawRound = true;
+        settle();
+      } else {
+        log(`Banner gap ${expected} → ${id} — sequence stopped (missing result, not settled as 1×)`);
+        engine.abortOpenSequence("gap");
+        bot.pending = null;
+        bot.awaitingBet = false;
+        bot.armedAtId = 0;
+        syncPendingFlag();
+        syncAwaitingFlag();
+      }
+      observeRound(value, id);
       return;
     }
     observeRound(value, id);
@@ -878,6 +890,7 @@
 
     const source = `${crashId || "?"} ${crash2}x ${won ? "<" : "≥"} 2× (RED)`;
     engine.onBetResult(won, p.stake, crash, crashId);
+    if (typeof engine.afterSettlement === "function") engine.afterSettlement(crashId);
     log(`${won ? "Win" : "Lose"} RED (${source}) | ${engine.state.message}`);
     const last = engine.state.history[engine.state.history.length - 1];
     pushBetLog({

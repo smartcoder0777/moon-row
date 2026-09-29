@@ -70,6 +70,11 @@
     return round2(crash) + 1e-9 >= CAT_MIN;
   }
 
+  /** Dashboard moon-stop: any crash ≥ 10× (moon or cat) ends the sequence. */
+  function isMoonLike(crash) {
+    return round2(crash) + 1e-9 >= MOON_MIN;
+  }
+
   function rowHasCat(row) {
     return row.rounds.some((r) => isCat(r.value));
   }
@@ -205,6 +210,13 @@
       const side = rowSide(crash);
       const row = { id: Number(id), value: round2(crash), pos: 0 };
 
+      const gid = Number(id);
+      if (st.last_game_id && gid !== st.last_game_id + 1) {
+        if (st.sequence || st.awaiting_bet) this._endSequence("gap", false);
+        this._closeCurrentRow();
+        st.current_row = null;
+      }
+
       if (!st.current_row) {
         st.current_row = { type: side, rounds: [] };
       } else if (st.current_row.type !== side) {
@@ -233,7 +245,7 @@
     _endSequence(reason, won) {
       const st = this.state;
       if (won) st.sequences_won += 1;
-      else if (reason !== "moon_abort") st.sequences_lost += 1;
+      else if (st.sequence) st.sequences_lost += 1;
       st.sequence = null;
       st.awaiting_bet = false;
       if (reason) {
@@ -241,7 +253,9 @@
           reason === "win"
             ? "Sequence won — watching for next moon trigger"
             : reason === "moon_abort"
-              ? "Moon on bet round — sequence stopped"
+              ? "Moon or cat on bet round — sequence stopped"
+              : reason === "gap"
+                ? "Game-id gap — sequence stopped"
               : reason === "max_losses"
                 ? "3 losses — sequence reset, watching rows"
                 : `Sequence ended (${reason})`;
@@ -345,13 +359,19 @@
       st.last_crash = crash;
       st.awaiting_bet = false;
 
-      if (isMoon(crash)) {
+      if (isMoonLike(crash)) {
         const profit = round8(-stake);
         st.session_pnl += profit;
         st.total_lost += stake;
         st.losses += 1;
         st.last_result = "lose";
-        st.history.push({ result: "lose", stake, profit, crash, note: "moon on bet round" });
+        st.history.push({
+          result: "lose",
+          stake,
+          profit,
+          crash,
+          note: isCat(crash) ? "cat on bet round" : "moon on bet round",
+        });
         this._endSequence("moon_abort", false);
         if (this._hitStopLoss()) this._stop("Stop-loss reached");
         return;
@@ -390,6 +410,22 @@
     armAfterId() {
       const seq = this.state.sequence;
       return seq ? seq.arm_after_id || seq.trigger_id : 0;
+    }
+
+    /** Dashboard can trigger on the moon that just ended a sequence. */
+    afterSettlement(id) {
+      if (this.state.mode === MoonMode.STOPPED) return;
+      if (this.state.sequence || this.state.awaiting_bet) return;
+      const row = this.state.current_row;
+      if (!row || !row.rounds.length) return;
+      const round = row.rounds[row.rounds.length - 1];
+      if (!round || Number(round.id) !== Number(id)) return;
+      this._checkTrigger(round, row);
+    }
+
+    abortOpenSequence(reason) {
+      if (!this.state.sequence && !this.state.awaiting_bet) return;
+      this._endSequence(reason || "gap", false);
     }
 
     _hitStopLoss() {
