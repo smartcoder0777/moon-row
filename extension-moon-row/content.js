@@ -31,7 +31,7 @@
     placePump: null,
   };
 
-  let extVersion = "1.0.4";
+  let extVersion = "1.0.5";
   try {
     extVersion = chrome.runtime.getManifest().version;
   } catch (_) {}

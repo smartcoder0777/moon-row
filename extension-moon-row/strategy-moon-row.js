@@ -190,6 +190,7 @@
     }
 
     reset() {
+      this._retriggerSettlement = false;
       this.config.start_balance = 0;
       this.state = defaultMoonRowState();
       this.state.message = "Reset — watching moon rows";
@@ -295,6 +296,7 @@
     }
 
     replayGames(games) {
+      this._retriggerSettlement = false;
       const st = defaultMoonRowState();
       this.state = st;
       const sorted = (games || [])
@@ -361,6 +363,7 @@
 
       if (isMoonLike(crash)) {
         const profit = round8(-stake);
+        const firstBet = !st.sequence || st.sequence.attempt <= 1;
         st.session_pnl += profit;
         st.total_lost += stake;
         st.losses += 1;
@@ -372,6 +375,9 @@
           crash,
           note: isCat(crash) ? "cat on bet round" : "moon on bet round",
         });
+        // Dashboard only re-reads this round as a trigger when no bet was placed
+        // before it (bets.length === 0). After a real loss it skips past the moon.
+        this._retriggerSettlement = firstBet;
         this._endSequence("moon_abort", false);
         if (this._hitStopLoss()) this._stop("Stop-loss reached");
         return;
@@ -412,8 +418,11 @@
       return seq ? seq.arm_after_id || seq.trigger_id : 0;
     }
 
-    /** Dashboard can trigger on the moon that just ended a sequence. */
+    /** Match dashboard: re-trigger only when this round was the first bet. */
     afterSettlement(id) {
+      const allow = this._retriggerSettlement;
+      this._retriggerSettlement = false;
+      if (!allow) return;
       if (this.state.mode === MoonMode.STOPPED) return;
       if (this.state.sequence || this.state.awaiting_bet) return;
       const row = this.state.current_row;
